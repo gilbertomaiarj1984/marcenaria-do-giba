@@ -42,7 +42,12 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--text); }
+/* Tudo herda a cor do tema; nada fica com o preto padrão do navegador. */
+table, th, td, caption, h1, h2, h3, p, li, label, span, strong, small, input, select, option, textarea, button {
+  color: inherit;
+}
+.sidebar, .stage, .cutplan, .parts, .measure { color: var(--text); }
 html, body, #root { height: 100%; }
 .app { display: flex; height: 100%; }
 .sidebar {
