@@ -13,10 +13,26 @@ export interface ShelfConfig {
   plinthHeight: number; // altura do rodapé (0 = sem rodapé)
   columns: number;
   rows: number;
-  /** cells[coluna][linha], linha 0 = embaixo */
-  cells: CellType[][];
+  /** Áreas retangulares que cobrem a grade. Linha 0 = embaixo. */
+  regions: Region[];
   hinge: HingeType;
 }
+
+/** Uma área da estante: um nicho ou vários nichos juntos, sem divisória entre eles. */
+export interface Region {
+  col: number;
+  row: number;
+  colSpan: number;
+  rowSpan: number;
+  type: CellType;
+  /** Quantidade de gavetas empilhadas, quando type = 'gaveta'. */
+  drawers: number;
+}
+
+/** Como a peça se move quando o móvel é mostrado aberto. */
+export type Motion =
+  | { type: 'hinge'; axisX: number; axisZ: number; dir: 1 | -1 }
+  | { type: 'slide'; distance: number };
 
 export type PartKind =
   | 'lateral'
@@ -48,7 +64,8 @@ export interface Panel {
   width: number;
   thickness: number;
   material: string;
-  cell?: { col: number; row: number };
+  region?: number;
+  motion?: Motion;
 }
 
 export interface Hardware {
@@ -57,20 +74,19 @@ export interface Hardware {
   detail?: string;
 }
 
-export interface CellBox {
-  col: number;
-  row: number;
+export interface RegionBox {
+  index: number;
+  region: Region;
   x: number;
   y: number;
   w: number;
   h: number;
-  type: CellType;
 }
 
 export interface BuildResult {
   panels: Panel[];
   hardware: Hardware[];
-  cells: CellBox[];
+  regions: RegionBox[];
   interiorDepth: number;
   columnWidth: number;
   rowHeight: number;

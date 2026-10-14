@@ -1,11 +1,12 @@
+import { gridRegions, ownerGrid } from './regions';
 import type {
   BuildResult,
-  CellBox,
-  CellType,
   Hardware,
+  Motion,
   Panel,
   PartKind,
   PartLine,
+  RegionBox,
   ShelfConfig,
 } from './types';
 
@@ -13,6 +14,10 @@ import type {
 export const FRONT_GAP = 3;
 /** Espaço lateral exigido pela corrediça telescópica, por lado (mm). */
 export const SLIDE_SIDE_CLEARANCE = 12.5;
+/** Acima desta largura a área com porta leva duas portas (mm). */
+export const MAX_DOOR_WIDTH = 600;
+/** Ângulo de abertura das portas na visualização (graus). */
+export const DOOR_OPEN_ANGLE = 100;
 /** Comprimentos comerciais de corrediça telescópica (mm). */
 export const SLIDE_LENGTHS = [250, 300, 350, 400, 450, 500, 550];
 /** Folga entre a caixa da gaveta e a altura do vão (mm). */
@@ -30,12 +35,6 @@ export function hingesForDoor(doorHeight: number): number {
 export function slideLengthFor(interiorDepth: number): number | null {
   const fit = SLIDE_LENGTHS.filter((l) => l <= interiorDepth - 10);
   return fit.length ? fit[fit.length - 1] : null;
-}
-
-export function resizeCells(cells: CellType[][], columns: number, rows: number): CellType[][] {
-  return Array.from({ length: columns }, (_, c) =>
-    Array.from({ length: rows }, (_, r) => cells[c]?.[r] ?? 'nicho'),
-  );
 }
 
 export function columnWidth(c: ShelfConfig): number {
@@ -72,7 +71,8 @@ export function buildShelf(c: ShelfConfig): BuildResult {
     size: [number, number, number],
     thickness: number,
     material: string,
-    cell?: { col: number; row: number },
+    region?: number,
+    motion?: Motion,
   ) => {
     // A medida de corte são as duas dimensões que não são a espessura.
     const dims = [...size];
@@ -93,7 +93,8 @@ export function buildShelf(c: ShelfConfig): BuildResult {
       width: b,
       thickness,
       material,
-      cell,
+      region,
+      motion,
     });
   };
 
@@ -107,53 +108,107 @@ export function buildShelf(c: ShelfConfig): BuildResult {
   }
   add('fundo', 'Fundo', [0, c.plinthHeight, 0], [c.width, c.height - c.plinthHeight, bt], bt, hdf);
 
+  const g = ownerGrid(c.regions, c.columns, c.rows);
+  const colX = (col: number) => t + col * (colW + t);
+  const rowY = (row: number) => yInterior + row * (rowH + t);
+  // Existe divisória na linha vertical i (entre as colunas i-1 e i) na altura da linha r?
+  const vSeg = (i: number, r: number) => i <= 0 || i >= c.columns || g[i - 1][r] !== g[i][r];
+  // Existe prateleira na linha horizontal j (entre as linhas j-1 e j) na coluna col?
+  const hSeg = (col: number, j: number) => g[col][j - 1] !== g[col][j];
+  // A divisória atravessa a linha j no ponto i? Nesse caso a prateleira para nela.
+  const crosses = (i: number, j: number) => vSeg(i, j - 1) && vSeg(i, j);
+
+  // Divisórias: trechos contínuos em cada linha vertical.
   for (let i = 1; i < c.columns; i++) {
-    const x = t + i * colW + (i - 1) * t;
-    add('divisoria', 'Divisória', [x, yInterior, z0], [t, hi, dc], t, mdf);
+    let r = 0;
+    while (r < c.rows) {
+      if (!vSeg(i, r)) {
+        r++;
+        continue;
+      }
+      const a = r;
+      while (r + 1 < c.rows && vSeg(i, r + 1)) r++;
+      const h = (r - a + 1) * rowH + (r - a) * t;
+      add('divisoria', 'Divisória', [colX(i) - t, rowY(a), z0], [t, h, dc], t, mdf);
+      r++;
+    }
   }
 
-  const cells: CellBox[] = [];
-  for (let col = 0; col < c.columns; col++) {
-    const x = t + col * (colW + t);
-    for (let row = 1; row < c.rows; row++) {
-      const y = yInterior + row * rowH + (row - 1) * t;
-      add('prateleira', 'Prateleira', [x, y, z0], [colW, t, dc], t, mdf, { col, row });
-    }
-    for (let row = 0; row < c.rows; row++) {
-      const y = yInterior + row * (rowH + t);
-      cells.push({ col, row, x, y, w: colW, h: rowH, type: c.cells[col]?.[row] ?? 'nicho' });
+  // Prateleiras: trechos contínuos em cada linha horizontal, cortados onde a divisória atravessa.
+  // Onde uma divisória termina, a prateleira passa por cima dela.
+  for (let j = 1; j < c.rows; j++) {
+    let col = 0;
+    while (col < c.columns) {
+      if (!hSeg(col, j)) {
+        col++;
+        continue;
+      }
+      const a = col;
+      while (col + 1 < c.columns && hSeg(col + 1, j) && !crosses(col + 1, j)) col++;
+      let x0 = colX(a);
+      let x1 = colX(col) + colW;
+      if (a > 0 && !crosses(a, j)) x0 -= t;
+      if (col + 1 < c.columns && !crosses(col + 1, j)) x1 += t;
+      add('prateleira', 'Prateleira', [x0, rowY(j) - t, z0], [x1 - x0, t, dc], t, mdf);
+      col++;
     }
   }
+
+  const regions: RegionBox[] = c.regions.map((region, index) => ({
+    index,
+    region,
+    x: colX(region.col),
+    y: rowY(region.row),
+    w: region.colSpan * colW + (region.colSpan - 1) * t,
+    h: region.rowSpan * rowH + (region.rowSpan - 1) * t,
+  }));
 
   // Frentes (sobrepostas): cobrem o vão + metade da chapa em volta, menos a folga.
   let hinges = 0;
+  let doors = 0;
   let drawers = 0;
   const slide = slideLengthFor(dc);
-  for (const cell of cells) {
-    if (cell.type === 'nicho') continue;
-    const fw = cell.w + t - FRONT_GAP;
-    const fh = cell.h + t - FRONT_GAP;
-    const fx = cell.x - t / 2 + FRONT_GAP / 2;
-    const fy = cell.y - t / 2 + FRONT_GAP / 2;
-    const at = { col: cell.col, row: cell.row };
-    if (cell.type === 'porta') {
-      add('porta', 'Porta', [fx, fy, c.depth], [fw, fh, t], t, mdf, at);
-      hinges += hingesForDoor(fh);
+  for (const box of regions) {
+    const { region } = box;
+    if (region.type === 'nicho') continue;
+    const fw = box.w + t - FRONT_GAP;
+    const fh = box.h + t - FRONT_GAP;
+    const fx = box.x - t / 2 + FRONT_GAP / 2;
+    const fy = box.y - t / 2 + FRONT_GAP / 2;
+    const ri = box.index;
+    if (region.type === 'porta') {
+      const leaves = fw > MAX_DOOR_WIDTH ? 2 : 1;
+      const lw = (fw - (leaves - 1) * FRONT_GAP) / leaves;
+      for (let k = 0; k < leaves; k++) {
+        const lx = fx + k * (lw + FRONT_GAP);
+        // Uma porta só abre para o lado de fora do móvel; duas portas abrem do meio.
+        const left = leaves === 2 ? k === 0 : box.x + box.w / 2 < c.width / 2;
+        const motion: Motion = { type: 'hinge', axisX: left ? lx : lx + lw, axisZ: c.depth, dir: left ? -1 : 1 };
+        add('porta', 'Porta', [lx, fy, c.depth], [lw, fh, t], t, mdf, ri, motion);
+        hinges += hingesForDoor(fh);
+        doors++;
+      }
       continue;
     }
-    drawers++;
-    add('frente-gaveta', 'Frente de gaveta', [fx, fy, c.depth], [fw, fh, t], t, mdf, at);
-    if (!slide) continue;
-    const boxW = cell.w - 2 * SLIDE_SIDE_CLEARANCE;
-    const boxH = Math.max(cell.h - DRAWER_TOP_CLEARANCE, 60);
-    const bx = cell.x + SLIDE_SIDE_CLEARANCE;
-    const by = cell.y + 15;
-    const bz = c.depth - slide;
-    add('gaveta-lateral', 'Lateral de gaveta', [bx, by, bz], [t, boxH, slide], t, mdf, at);
-    add('gaveta-lateral', 'Lateral de gaveta', [bx + boxW - t, by, bz], [t, boxH, slide], t, mdf, at);
-    add('gaveta-frente-traseira', 'Frente/traseira interna', [bx + t, by, c.depth - t], [boxW - 2 * t, boxH, t], t, mdf, at);
-    add('gaveta-frente-traseira', 'Frente/traseira interna', [bx + t, by, bz], [boxW - 2 * t, boxH, t], t, mdf, at);
-    add('gaveta-fundo', 'Fundo de gaveta', [bx, by - bt, bz], [boxW, bt, slide], bt, hdf, at);
+    const count = Math.max(1, Math.round(region.drawers));
+    const frontH = (fh - (count - 1) * FRONT_GAP) / count;
+    const slotH = box.h / count;
+    for (let k = 0; k < count; k++) {
+      drawers++;
+      const motion: Motion = { type: 'slide', distance: (slide ?? dc) * 0.85 };
+      add('frente-gaveta', 'Frente de gaveta', [fx, fy + k * (frontH + FRONT_GAP), c.depth], [fw, frontH, t], t, mdf, ri, motion);
+      if (!slide) continue;
+      const boxW = box.w - 2 * SLIDE_SIDE_CLEARANCE;
+      const boxH = Math.max(slotH - DRAWER_TOP_CLEARANCE, 60);
+      const bx = box.x + SLIDE_SIDE_CLEARANCE;
+      const by = box.y + k * slotH + 15;
+      const bz = c.depth - slide;
+      add('gaveta-lateral', 'Lateral de gaveta', [bx, by, bz], [t, boxH, slide], t, mdf, ri, motion);
+      add('gaveta-lateral', 'Lateral de gaveta', [bx + boxW - t, by, bz], [t, boxH, slide], t, mdf, ri, motion);
+      add('gaveta-frente-traseira', 'Frente/traseira interna', [bx + t, by, c.depth - t], [boxW - 2 * t, boxH, t], t, mdf, ri, motion);
+      add('gaveta-frente-traseira', 'Frente/traseira interna', [bx + t, by, bz], [boxW - 2 * t, boxH, t], t, mdf, ri, motion);
+      add('gaveta-fundo', 'Fundo de gaveta', [bx, by - bt, bz], [boxW, bt, slide], bt, hdf, ri, motion);
+    }
   }
 
   const hardware: Hardware[] = [];
@@ -163,7 +218,7 @@ export function buildShelf(c: ShelfConfig): BuildResult {
       quantity: hinges,
       detail: 'com amortecedor, sobreposição conforme a posição da porta',
     });
-    hardware.push({ name: 'Puxador de porta', quantity: cells.filter((x) => x.type === 'porta').length });
+    hardware.push({ name: 'Puxador de porta', quantity: doors });
   }
   if (drawers) {
     hardware.push({
@@ -172,15 +227,19 @@ export function buildShelf(c: ShelfConfig): BuildResult {
     });
     hardware.push({ name: 'Puxador de gaveta', quantity: drawers });
   }
-  hardware.push({ name: 'Parafuso 4,0 x 40mm (corpo)', quantity: estimateScrews(c) });
+  hardware.push({ name: 'Parafuso 4,0 x 40mm (corpo)', quantity: estimateScrews(panels) });
 
-  return { panels, hardware, cells, interiorDepth: dc, columnWidth: colW, rowHeight: rowH };
+  return { panels, hardware, regions, interiorDepth: dc, columnWidth: colW, rowHeight: rowH };
 }
 
-function estimateScrews(c: ShelfConfig): number {
-  // 2 por ponta de cada peça horizontal/vertical interna, 3 por ponta de base/tampo.
-  const shelves = c.columns * (c.rows - 1);
-  return 4 * 3 + (c.columns - 1) * 2 * 2 + shelves * 2 * 2;
+function estimateScrews(panels: Panel[]): number {
+  // 3 por ponta de base e tampo, 2 por ponta de divisória e prateleira.
+  let n = 0;
+  for (const p of panels) {
+    if (p.kind === 'base' || p.kind === 'tampo') n += 6;
+    if (p.kind === 'divisoria' || p.kind === 'prateleira') n += 4;
+  }
+  return n;
 }
 
 /** Agrupa peças iguais na lista de corte. */
@@ -206,11 +265,11 @@ export function partsList(panels: Panel[]): PartLine[] {
 export function defaultConfig(): ShelfConfig {
   const columns = 4;
   const rows = 4;
-  const cells = resizeCells([], columns, rows);
-  cells[0][0] = 'porta';
-  cells[1][0] = 'porta';
-  cells[2][0] = 'gaveta';
-  cells[3][0] = 'gaveta';
+  const regions = gridRegions(columns, rows);
+  regions[0].type = 'porta';
+  regions[1].type = 'porta';
+  regions[2] = { ...regions[2], type: 'gaveta', drawers: 2 };
+  regions[3] = { ...regions[3], type: 'gaveta', drawers: 2 };
   return {
     width: 1470,
     height: 1550,
@@ -220,7 +279,7 @@ export function defaultConfig(): ShelfConfig {
     plinthHeight: 80,
     columns,
     rows,
-    cells,
+    regions,
     hinge: 'curva',
   };
 }
