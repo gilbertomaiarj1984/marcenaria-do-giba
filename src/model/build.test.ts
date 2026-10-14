@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildShelf, defaultConfig, hingesForDoor, partsList } from './build';
-import { gridRegions, mergeRegion, regionAt, resizeRegions, splitRegion } from './regions';
+import { doorOverSelection, gridRegions, mergeRegion, mergeSelection, regionAt, resizeRegions, splitRegion } from './regions';
+import { measureSelection } from './measures';
 import { freeSpan, suggest } from './suggestions';
 import type { ShelfConfig } from './types';
 
@@ -139,5 +140,51 @@ describe('suggest', () => {
     const c = defaultConfig();
     const regions = c.regions.map((r) => (r.type === 'gaveta' ? { ...r, drawers: 4 } : r));
     expect(suggest({ ...c, regions }).some((s) => s.level === 'erro')).toBe(true);
+  });
+});
+
+describe('medidas', () => {
+  it('mede dois nichos lado a lado por dentro e por fora', () => {
+    const c = plain();
+    const r = buildShelf(c);
+    const m = measureSelection(r, 18, [regionAt(c.regions, 0, 3), regionAt(c.regions, 1, 3)])!;
+    expect(m).toMatchObject({ freeWidth: 708, freeHeight: 345, outerWidth: 744, outerHeight: 381, niches: 2 });
+  });
+
+  it('junta a seleção num vão só, incluindo o que está no meio', () => {
+    const c = plain();
+    const res = mergeSelection(c.regions, [regionAt(c.regions, 0, 0), regionAt(c.regions, 2, 1)]);
+    expect(res.regions[res.index]).toMatchObject({ col: 0, row: 0, colSpan: 3, rowSpan: 2 });
+    expect(res.regions).toHaveLength(16 - 6 + 1);
+  });
+});
+
+describe('portas', () => {
+  it('abre para o lado escolhido', () => {
+    const c = defaultConfig();
+    const regions = c.regions.map((r, i) => (i === 0 ? { ...r, side: 'direita' as const } : r));
+    const door = buildShelf({ ...c, regions }).panels.find((p) => p.kind === 'porta')!;
+    expect(door.motion).toMatchObject({ dir: 1, axisX: door.x + door.sx });
+  });
+
+  it('porta dupla mesmo em vão estreito', () => {
+    const c = defaultConfig();
+    const regions = c.regions.map((r, i) => (i === 0 ? { ...r, side: 'dupla' as const } : r));
+    const doors = buildShelf({ ...c, regions }).panels.filter((p) => p.kind === 'porta');
+    expect(doors).toHaveLength(3);
+    expect(doors[0].sx).toBe(178.5); // (360 - 3) / 2
+  });
+
+  it('porta sobre vários nichos mantém prateleiras e divisórias', () => {
+    const c = plain();
+    const before = buildShelf(c).panels.filter((p) => p.kind === 'prateleira' || p.kind === 'divisoria').length;
+    const { regions } = doorOverSelection(c.regions, [regionAt(c.regions, 0, 0), regionAt(c.regions, 1, 1)]);
+    const r = buildShelf({ ...c, regions });
+    const after = r.panels.filter((p) => p.kind === 'prateleira' || p.kind === 'divisoria').length;
+    expect(after).toBe(before);
+    const doors = r.panels.filter((p) => p.kind === 'porta');
+    // 2 nichos de largura: 708 + 18 - 3 = 723 > 600, vira par de portas de 2 nichos de altura
+    expect(doors).toHaveLength(2);
+    expect(doors[0].sy).toBe(708 + 18 - 3);
   });
 });

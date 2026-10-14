@@ -6,7 +6,10 @@ Feita para quem tem conhecimento básico de marcenaria. O primeiro móvel é uma
 ## O que já faz
 
 - Editor 3D da estante: largura, altura, profundidade, rodapé, colunas e linhas.
-- Cada vão pode ser nicho, porta ou gaveta (clique no vão para trocar).
+- Cada vão pode ser nicho, porta ou gaveta. Dá para tirar divisórias e prateleiras e juntar nichos em áreas maiores.
+- Várias gavetas empilhadas num vão; porta com lado da dobradiça escolhido, porta dupla, ou uma porta só na frente de vários nichos mantendo as prateleiras.
+- Ver portas e gavetas abertas.
+- Medidas no desenho: externas, de cada nicho e da seleção de vários nichos (vão livre e por fora das chapas).
 - Espessura da chapa do corpo: 15, 18 ou 25 mm (MDF). Fundo em HDF 6 mm.
 - Ferragens: dobradiça caneco 35 mm (quantidade pela altura da porta) e corrediça telescópica (comprimento pela profundidade).
 - Sugestões: nicho pequeno para LP, prateleira que pode empenar com o peso dos discos, gaveta sem espaço, dobradiça errada para o tipo de porta.

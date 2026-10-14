@@ -1,4 +1,4 @@
-import { buildShelf, columnWidth, rowHeight, slideLengthFor } from './build';
+import { buildShelf, columnWidth, hingesForDoor, MAX_DOOR_WIDTH, rowHeight, slideLengthFor } from './build';
 import { resizeRegions } from './regions';
 import type { Panel, ShelfConfig, Suggestion } from './types';
 
@@ -112,6 +112,21 @@ export function suggest(c: ShelfConfig): Suggestion[] {
       message:
         'As portas cobrem metade da espessura da chapa (meia sobreposição). Para isso a dobradiça indicada é a curva.',
       fix: { label: 'Usar dobradiça curva', apply: (x) => ({ ...x, hinge: 'curva' }) },
+    });
+  }
+
+  const wideDoor = built.panels.find((p) => p.kind === 'porta' && p.sx > MAX_DOOR_WIDTH);
+  if (wideDoor) {
+    out.push({
+      level: 'dica',
+      message: `Há porta de ${mm(wideDoor.sx)} de largura. Acima de ${MAX_DOOR_WIDTH} mm a porta pesa e tende a cair; considere porta dupla.`,
+    });
+  }
+  const tallDoor = built.panels.find((p) => p.kind === 'porta' && p.sy > 2 * p.sx && p.sy > 1200);
+  if (tallDoor) {
+    out.push({
+      level: 'dica',
+      message: `Porta de ${mm(tallDoor.sy)} de altura: use ${hingesForDoor(tallDoor.sy)} dobradiças (já contadas) e regule bem para não empenar.`,
     });
   }
 

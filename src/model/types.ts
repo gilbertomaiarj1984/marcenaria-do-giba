@@ -27,7 +27,16 @@ export interface Region {
   type: CellType;
   /** Quantidade de gavetas empilhadas, quando type = 'gaveta'. */
   drawers: number;
+  /** Lado da dobradiça, quando type = 'porta'. 'auto' escolhe pelo tamanho e posição. */
+  side?: DoorSide;
+  /**
+   * Porta sobre vários nichos mantendo as divisórias e prateleiras por dentro.
+   * Só vale quando type = 'porta'.
+   */
+  keepInside?: boolean;
 }
+
+export type DoorSide = 'auto' | 'esquerda' | 'direita' | 'dupla';
 
 /** Como a peça se move quando o móvel é mostrado aberto. */
 export type Motion =

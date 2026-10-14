@@ -1,4 +1,4 @@
-import { gridRegions, ownerGrid } from './regions';
+import { gridRegions, structureGrid } from './regions';
 import type {
   BuildResult,
   Hardware,
@@ -108,7 +108,7 @@ export function buildShelf(c: ShelfConfig): BuildResult {
   }
   add('fundo', 'Fundo', [0, c.plinthHeight, 0], [c.width, c.height - c.plinthHeight, bt], bt, hdf);
 
-  const g = ownerGrid(c.regions, c.columns, c.rows);
+  const g = structureGrid(c.regions, c.columns, c.rows);
   const colX = (col: number) => t + col * (colW + t);
   const rowY = (row: number) => yInterior + row * (rowH + t);
   // Existe divisória na linha vertical i (entre as colunas i-1 e i) na altura da linha r?
@@ -177,12 +177,16 @@ export function buildShelf(c: ShelfConfig): BuildResult {
     const fy = box.y - t / 2 + FRONT_GAP / 2;
     const ri = box.index;
     if (region.type === 'porta') {
-      const leaves = fw > MAX_DOOR_WIDTH ? 2 : 1;
+      const side = region.side ?? 'auto';
+      const leaves = side === 'dupla' || (side === 'auto' && fw > MAX_DOOR_WIDTH) ? 2 : 1;
       const lw = (fw - (leaves - 1) * FRONT_GAP) / leaves;
       for (let k = 0; k < leaves; k++) {
         const lx = fx + k * (lw + FRONT_GAP);
-        // Uma porta só abre para o lado de fora do móvel; duas portas abrem do meio.
-        const left = leaves === 2 ? k === 0 : box.x + box.w / 2 < c.width / 2;
+        // Automático: uma porta abre para o lado de fora do móvel; duas portas abrem do meio.
+        const left =
+          leaves === 2
+            ? k === 0
+            : side === 'esquerda' || (side !== 'direita' && box.x + box.w / 2 < c.width / 2);
         const motion: Motion = { type: 'hinge', axisX: left ? lx : lx + lw, axisZ: c.depth, dir: left ? -1 : 1 };
         add('porta', 'Porta', [lx, fy, c.depth], [lw, fh, t], t, mdf, ri, motion);
         hinges += hingesForDoor(fh);

@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { Viewer } from './components/Viewer';
 import { NumberField } from './components/NumberField';
 import { buildShelf, defaultConfig, MAX_DOOR_WIDTH, partsList, SHEET_THICKNESSES } from './model/build';
-import { mergeRegion, resizeRegions, splitRegion, type Direction } from './model/regions';
+import { measureSelection } from './model/measures';
+import { doorOverSelection, mergeRegion, mergeSelection, resizeRegions, splitRegion, type Direction } from './model/regions';
 import { suggest } from './model/suggestions';
-import type { CellType, HingeType, Region, ShelfConfig } from './model/types';
+import type { CellType, DoorSide, HingeType, Region, ShelfConfig } from './model/types';
 
 const STORAGE_KEY = 'marcenaria-do-giba:estante';
 const CYCLE: CellType[] = ['nicho', 'porta', 'gaveta'];
 const CELL_LABEL: Record<CellType, string> = { nicho: 'Nicho', porta: 'Porta', gaveta: 'Gaveta' };
+const SIDE_LABEL: Record<DoorSide, string> = { auto: '', esquerda: '◧', direita: '◨', dupla: 'dupla' };
 
 function loadConfig(): ShelfConfig {
   try {
@@ -25,7 +27,17 @@ export default function App() {
   const [config, setConfig] = useState<ShelfConfig>(loadConfig);
   const [showFronts, setShowFronts] = useState(true);
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selection, setSelection] = useState<number[]>([]);
+  const [multi, setMulti] = useState(false);
+  const [measures, setMeasures] = useState({ external: true, internal: false, selection: true });
+  const selected = selection.length === 1 ? selection[0] : null;
+  const setSelected = (i: number | null) => setSelection(i === null ? [] : [i]);
+
+  const pick = (i: number, additive: boolean) =>
+    setSelection((cur) => {
+      if (additive || multi) return cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i];
+      return cur.length === 1 && cur[0] === i ? [] : [i];
+    });
 
   useEffect(() => {
     try {
@@ -50,8 +62,15 @@ export default function App() {
   const updateRegion = (patch: Partial<Region>) =>
     setConfig((c) => ({
       ...c,
-      regions: c.regions.map((r, i) => (i === selected ? { ...r, ...patch } : r)),
+      regions: c.regions.map((r, i) => (selection.includes(i) ? { ...r, ...patch } : r)),
     }));
+
+  const mergeSelected = (keepInside = false) => {
+    const res = keepInside ? doorOverSelection(config.regions, selection) : mergeSelection(config.regions, selection);
+    setConfig({ ...config, regions: res.regions });
+    setSelected(res.index);
+    setMulti(false);
+  };
 
   const merge = (dir: Direction) => {
     if (selected === null) return;
@@ -69,6 +88,7 @@ export default function App() {
   const fillAll = (type: CellType) =>
     setConfig((c) => ({ ...c, regions: c.regions.map((r) => ({ ...r, type })) }));
 
+  const measure = useMemo(() => measureSelection(result, config.thickness, selection), [result, config.thickness, selection]);
   const sel = selected !== null ? config.regions[selected] : null;
   const selBox = selected !== null ? result.regions[selected] : null;
   const canMerge = (dir: Direction) => {
@@ -129,7 +149,21 @@ export default function App() {
 
         <section>
           <h2>Vãos</h2>
-          <p className="muted small">Clique num vão, aqui ou no desenho, para escolher o que ele vai ser.</p>
+          <p className="muted small">
+            Clique num vão, aqui ou no desenho, para escolher o que ele vai ser. Para medir ou juntar vários, segure Shift
+            ou ligue "Selecionar vários".
+          </p>
+          <label className="check small">
+            <input
+              type="checkbox"
+              checked={multi}
+              onChange={(e) => {
+                setMulti(e.target.checked);
+                if (!e.target.checked) setSelection((cur) => cur.slice(-1));
+              }}
+            />{' '}
+            Selecionar vários
+          </label>
           <div
             className="cells"
             style={{
@@ -140,16 +174,17 @@ export default function App() {
             {config.regions.map((r, i) => (
               <button
                 key={`${r.col}-${r.row}`}
-                className={`cell cell-${r.type}${i === selected ? ' selected' : ''}`}
+                className={`cell cell-${r.type}${selection.includes(i) ? ' selected' : ''}`}
                 style={{
                   gridColumn: `${r.col + 1} / span ${r.colSpan}`,
                   gridRow: `${config.rows - r.row - r.rowSpan + 1} / span ${r.rowSpan}`,
                 }}
-                aria-pressed={i === selected}
-                onClick={() => setSelected(i === selected ? null : i)}
+                aria-pressed={selection.includes(i)}
+                onClick={(e) => pick(i, e.shiftKey || e.ctrlKey || e.metaKey)}
               >
                 {CELL_LABEL[r.type]}
                 {r.type === 'gaveta' && r.drawers > 1 ? ` x${r.drawers}` : ''}
+                {r.type === 'porta' && r.side && r.side !== 'auto' ? ` (${SIDE_LABEL[r.side]})` : ''}
               </button>
             ))}
           </div>
@@ -157,7 +192,8 @@ export default function App() {
           {sel && selBox ? (
             <div className="editor">
               <p className="small">
-                <strong>Vão selecionado:</strong> {Math.round(selBox.w)} x {Math.round(selBox.h)} mm
+                <strong>Vão selecionado:</strong> {Math.round(selBox.w)} x {Math.round(selBox.h)} mm livre,{' '}
+                {Math.round(selBox.w + 2 * config.thickness)} x {Math.round(selBox.h + 2 * config.thickness)} mm por fora
               </p>
               <div className="segmented" role="radiogroup" aria-label="Tipo do vão">
                 {CYCLE.map((t) => (
@@ -181,8 +217,33 @@ export default function App() {
                   onChange={(v) => updateRegion({ drawers: v })}
                 />
               )}
-              {sel.type === 'porta' && selBox.w + config.thickness > MAX_DOOR_WIDTH && (
-                <p className="muted small">Vão largo: leva duas portas que abrem do meio.</p>
+              {sel.type === 'porta' && (
+                <>
+                  <label className="field">
+                    <span>Lado da dobradiça</span>
+                    <select
+                      value={sel.side ?? 'auto'}
+                      onChange={(e) => updateRegion({ side: e.target.value as DoorSide })}
+                    >
+                      <option value="auto">
+                        Automático ({selBox.w + config.thickness > MAX_DOOR_WIDTH ? 'porta dupla' : 'abre para fora do móvel'})
+                      </option>
+                      <option value="esquerda">Dobradiça na esquerda</option>
+                      <option value="direita">Dobradiça na direita</option>
+                      <option value="dupla">Porta dupla, abre do meio</option>
+                    </select>
+                  </label>
+                  {(sel.colSpan > 1 || sel.rowSpan > 1) && (
+                    <label className="check small">
+                      <input
+                        type="checkbox"
+                        checked={!!sel.keepInside}
+                        onChange={(e) => updateRegion({ keepInside: e.target.checked })}
+                      />{' '}
+                      Manter divisórias e prateleiras atrás da porta
+                    </label>
+                  )}
+                </>
               )}
               <div className="merge">
                 <span className="small">Tirar divisória</span>
@@ -205,6 +266,51 @@ export default function App() {
                   Recolocar divisórias e prateleiras deste vão
                 </button>
               )}
+            </div>
+          ) : selection.length > 1 && measure ? (
+            <div className="editor">
+              <p className="small">
+                <strong>{selection.length} vãos selecionados</strong>, cobrindo {measure.niches} nichos
+              </p>
+              <table className="measure small">
+                <tbody>
+                  <tr>
+                    <th></th>
+                    <th>Largura</th>
+                    <th>Altura</th>
+                  </tr>
+                  <tr>
+                    <td>Vão livre</td>
+                    <td>{measure.freeWidth} mm</td>
+                    <td>{measure.freeHeight} mm</td>
+                  </tr>
+                  <tr>
+                    <td>Por fora das chapas</td>
+                    <td>{measure.outerWidth} mm</td>
+                    <td>{measure.outerHeight} mm</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="muted small">
+                Vão livre é de face interna a face interna, do primeiro ao último vão. Profundidade interna{' '}
+                {Math.round(result.interiorDepth)} mm.
+              </p>
+              <div className="segmented" role="radiogroup" aria-label="Tipo dos vãos selecionados">
+                {CYCLE.map((t) => (
+                  <button key={t} role="radio" aria-checked={false} onClick={() => updateRegion({ type: t })}>
+                    Todos {CELL_LABEL[t].toLowerCase()}
+                  </button>
+                ))}
+              </div>
+              <button className="primary" onClick={() => mergeSelected(true)}>
+                Uma porta só na frente (mantém divisórias e prateleiras)
+              </button>
+              <button className="secondary" onClick={() => mergeSelected(false)}>
+                Juntar num vão só (tira divisórias e prateleiras entre eles)
+              </button>
+              <button className="link" onClick={() => setSelection([])}>
+                Limpar seleção
+              </button>
             </div>
           ) : (
             <div className="row">
@@ -302,15 +408,36 @@ export default function App() {
           <button className="toggle" aria-pressed={open} onClick={() => setOpen((o) => !o)}>
             {open ? 'Fechar portas e gavetas' : 'Abrir portas e gavetas'}
           </button>
-          <span className="muted small">Arraste para girar, role para aproximar.</span>
+          <div className="measures" role="group" aria-label="Medidas no desenho">
+            <span className="small">Medidas:</span>
+            {(
+              [
+                ['external', 'Externas'],
+                ['internal', 'Dos nichos'],
+                ['selection', 'Da seleção'],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                className="toggle"
+                aria-pressed={measures[k]}
+                onClick={() => setMeasures((m) => ({ ...m, [k]: !m[k] }))}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="muted small hint">Arraste para girar, role para aproximar.</span>
         </div>
         <Viewer
           config={config}
           result={result}
           showFronts={showFronts}
           open={open}
-          selected={selected}
-          onRegionClick={(i) => setSelected(i)}
+          selection={selection}
+          measures={measures}
+          measure={measure}
+          onRegionClick={pick}
         />
       </main>
     </div>

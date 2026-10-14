@@ -13,6 +13,20 @@ export function gridRegions(columns: number, rows: number, type: CellType = 'nic
   return out;
 }
 
+/**
+ * Como ownerGrid, mas para a estrutura: uma porta que mantém as prateleiras por dentro
+ * conta cada nicho dela separado, então as divisórias e prateleiras continuam lá.
+ */
+export function structureGrid(regions: Region[], columns: number, rows: number): number[][] {
+  const g = ownerGrid(regions, columns, rows);
+  return g.map((column, c) =>
+    column.map((owner, r) => {
+      const region = regions[owner];
+      return region && region.type === 'porta' && region.keepInside ? -2 - (c * rows + r) : owner;
+    }),
+  );
+}
+
 /** owner[col][row] = índice da área que ocupa aquele nicho (-1 se nenhuma). */
 export function ownerGrid(regions: Region[], columns: number, rows: number): number[][] {
   const g = Array.from({ length: columns }, () => Array<number>(rows).fill(-1));
@@ -59,7 +73,18 @@ export function mergeRegion(
   if (dir === 'baixo') r0--;
   if (dir === 'cima') r1++;
   if (c0 < 0 || r0 < 0 || c1 > columns || r1 > rows) return { regions, index };
+  return mergeBounds(regions, c0, r0, c1, r1, r);
+}
 
+/** Junta tudo que estiver no retângulo de nichos [c0, c1) x [r0, r1) num vão só. */
+export function mergeBounds(
+  regions: Region[],
+  c0: number,
+  r0: number,
+  c1: number,
+  r1: number,
+  base: Region = regions.find((x) => x.col === c0 && x.row === r0) ?? cell(c0, r0),
+): { regions: Region[]; index: number } {
   // Cresce até não cortar nenhuma área ao meio.
   let changed = true;
   const inside = new Set<number>();
@@ -79,7 +104,7 @@ export function mergeRegion(
     });
   }
 
-  const merged: Region = { ...r, col: c0, row: r0, colSpan: c1 - c0, rowSpan: r1 - r0 };
+  const merged: Region = { ...base, col: c0, row: r0, colSpan: c1 - c0, rowSpan: r1 - r0 };
   const out = sortRegions([...regions.filter((_, i) => !inside.has(i)), merged]);
   return { regions: out, index: out.indexOf(merged) };
 }
@@ -97,4 +122,21 @@ export function regionAt(regions: Region[], col: number, row: number): number {
   return regions.findIndex(
     (r) => col >= r.col && col < r.col + r.colSpan && row >= r.row && row < r.row + r.rowSpan,
   );
+}
+
+/** Junta os vãos indicados (e o que estiver entre eles) num vão só. */
+export function mergeSelection(regions: Region[], indices: number[]): { regions: Region[]; index: number } {
+  const sel = indices.map((i) => regions[i]);
+  const c0 = Math.min(...sel.map((r) => r.col));
+  const r0 = Math.min(...sel.map((r) => r.row));
+  const c1 = Math.max(...sel.map((r) => r.col + r.colSpan));
+  const r1 = Math.max(...sel.map((r) => r.row + r.rowSpan));
+  return mergeBounds(regions, c0, r0, c1, r1, sel[0]);
+}
+
+/** Uma porta só na frente dos vãos indicados, mantendo as divisórias e prateleiras por dentro. */
+export function doorOverSelection(regions: Region[], indices: number[]): { regions: Region[]; index: number } {
+  const res = mergeSelection(regions, indices);
+  const out = res.regions.map((r, i) => (i === res.index ? { ...r, type: 'porta' as const, keepInside: true } : r));
+  return { regions: out, index: res.index };
 }
