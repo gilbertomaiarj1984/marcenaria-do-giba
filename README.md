@@ -22,10 +22,11 @@ Feita para quem tem conhecimento básico de marcenaria. O primeiro móvel é uma
 - Portas e frentes de gaveta sobrepostas, cobrindo metade da chapa em volta do vão, com 3 mm de folga entre frentes.
 - Caixa da gaveta: 12,5 mm de folga por lado para a corrediça e 40 mm de folga na altura.
 
+- Plano de corte: quantas chapas comprar, desenho de cada chapa com as peças (corte em guilhotina, como na seccionadora), medida da chapa, espessura da serra, refilo e opção de respeitar o veio. Exporta em PDF.
+
 ## Próximos passos
 
-1. Plano de corte das chapas (quantidade de chapas, desenho de cada uma, PDF).
-2. Importar imagem de inspiração para a IA sugerir medidas e divisões.
+1. Importar imagem de inspiração para a IA sugerir medidas e divisões.
 
 ## Rodar
 

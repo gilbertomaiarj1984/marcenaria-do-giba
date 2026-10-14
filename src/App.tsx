@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Viewer } from './components/Viewer';
+import { CutPlanView } from './components/CutPlanView';
+import { DEFAULT_CUT, planCuts, sheetsByMaterial, type CutSettings } from './model/cutting';
+import { buildPdf, savePdf } from './pdf';
 import { NumberField } from './components/NumberField';
 import { buildShelf, defaultConfig, MAX_DOOR_WIDTH, partsList, SHEET_THICKNESSES } from './model/build';
 import { measureSelection } from './model/measures';
@@ -8,6 +11,7 @@ import { suggest } from './model/suggestions';
 import type { CellType, DoorSide, HingeType, Region, ShelfConfig } from './model/types';
 
 const STORAGE_KEY = 'marcenaria-do-giba:estante';
+const CUT_KEY = 'marcenaria-do-giba:corte';
 const CYCLE: CellType[] = ['nicho', 'porta', 'gaveta'];
 const CELL_LABEL: Record<CellType, string> = { nicho: 'Nicho', porta: 'Porta', gaveta: 'Gaveta' };
 const SIDE_LABEL: Record<DoorSide, string> = { auto: '', esquerda: '◧', direita: '◨', dupla: 'dupla' };
@@ -23,7 +27,19 @@ function loadConfig(): ShelfConfig {
   return defaultConfig();
 }
 
+function loadCut(): CutSettings {
+  try {
+    const raw = localStorage.getItem(CUT_KEY);
+    if (raw) return { ...DEFAULT_CUT, ...JSON.parse(raw) };
+  } catch {
+    // sem armazenamento
+  }
+  return DEFAULT_CUT;
+}
+
 export default function App() {
+  const [view, setView] = useState<'3d' | 'corte'>('3d');
+  const [cut, setCut] = useState<CutSettings>(loadCut);
   const [config, setConfig] = useState<ShelfConfig>(loadConfig);
   const [showFronts, setShowFronts] = useState(true);
   const [open, setOpen] = useState(false);
@@ -47,7 +63,16 @@ export default function App() {
     }
   }, [config]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CUT_KEY, JSON.stringify(cut));
+    } catch {
+      // ignora
+    }
+  }, [cut]);
+
   const result = useMemo(() => buildShelf(config), [config]);
+  const plan = useMemo(() => planCuts(result.panels, cut), [result, cut]);
   const parts = useMemo(() => partsList(result.panels), [result]);
   const suggestions = useMemo(() => suggest(config), [config]);
 
@@ -385,7 +410,15 @@ export default function App() {
               ))}
             </tbody>
           </table>
-          <p className="muted small">O plano de corte das chapas vem no próximo passo.</p>
+          <p className="small">
+            {sheetsByMaterial(plan)
+              .map((m) => `${m.count} ${m.count === 1 ? 'chapa' : 'chapas'} de ${m.material}`)
+              .join(' + ')}
+            .{' '}
+            <button className="link" onClick={() => setView('corte')}>
+              Ver plano de corte
+            </button>
+          </p>
         </section>
 
         <button
@@ -400,6 +433,23 @@ export default function App() {
       </aside>
 
       <main className="stage">
+        <div className="tabs" role="tablist">
+          <button role="tab" aria-selected={view === '3d'} onClick={() => setView('3d')}>
+            Desenho 3D
+          </button>
+          <button role="tab" aria-selected={view === 'corte'} onClick={() => setView('corte')}>
+            Plano de corte
+          </button>
+        </div>
+        {view === 'corte' ? (
+          <CutPlanView
+            plan={plan}
+            settings={cut}
+            onSettings={setCut}
+            onPdf={() => savePdf(buildPdf(config, plan, result.hardware), 'plano-de-corte-marcenaria-do-giba.pdf')}
+          />
+        ) : (
+        <div className="view3d">
         <div className="toolbar">
           <label>
             <input type="checkbox" checked={showFronts} onChange={(e) => setShowFronts(e.target.checked)} /> Mostrar portas e
@@ -439,6 +489,8 @@ export default function App() {
           measure={measure}
           onRegionClick={pick}
         />
+        </div>
+        )}
       </main>
     </div>
   );
